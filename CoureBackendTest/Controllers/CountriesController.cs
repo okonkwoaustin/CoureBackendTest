@@ -1,70 +1,44 @@
 ﻿using CoureBackendTest.Data;
+using CoureBackendTest.Models;
+using CoureBackendTest.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace CoureBackendTest.Controllers;
 
 [ApiController]
 [Route("api/countries")]
-public class CountriesController(AppDbContext db) : ControllerBase
+public class CountriesController : ControllerBase
 {
-    [HttpGet("PhoneNumberLookup")]
-    public async Task<IActionResult> Lookup([FromQuery] string? phoneNumber)
+    private readonly IPhoneLookupService _service;
+
+    public CountriesController(IPhoneLookupService service) => _service = service;
+
+
+
+    /// <summary>Detects the country (and its operators) from a phone number's country code.</summary>
+    /// <param name="phoneNumber">e.g. 2348033432323 (a leading + or 00 is accepted).</param>
+    [HttpGet("PhoneNumbersLookup")]
+    [ProducesResponseType(typeof(PhoneLookupResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Get([FromQuery] string? phoneNumber, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(phoneNumber))
+        if (string.IsNullOrWhiteSpace(phoneNumber) ||
+            !PhoneLookupService.IsValid(PhoneLookupService.Normalize(phoneNumber)))
         {
-            return BadRequest(new
-            {
-                message = "Phone number is required."
-            });
+            return Problem(
+                title: "Invalid phone number",
+                detail: "Provide 7-15 digits including the country code, e.g. 2348033432323.",
+                statusCode: StatusCodes.Status400BadRequest);
         }
 
-        // Keep digits only, allowing inputs such as +234 803-343-2323.
-        string normalizedNumber = new(
-            phoneNumber.Where(char.IsDigit).ToArray()
-        );
+        var result = await _service.LookupAsync(phoneNumber, ct);
 
-        if (normalizedNumber.Length == 0)
-        {
-            return BadRequest(new
-            {
-                message = "Please provide a valid phone number."
-            });
-        }
-
-        var countries = await db.Countries
-            .Include(c => c.CountryDetails)
-            .ToListAsync();
-
-        // Longest prefix first, so overlapping calling codes
-        // would be handled correctly.
-        var country = countries
-            .OrderByDescending(c => c.CountryCode.Length)
-            .FirstOrDefault(c =>
-                normalizedNumber.StartsWith(c.CountryCode));
-
-        if (country is null)
-        {
-            return NotFound(new
-            {
-                message = "No country was found for this country calling code."
-            });
-        }
-
-        return Ok(new
-        {
-            number = normalizedNumber,
-            country = new
-            {
-                countryCode = country.CountryCode,
-                name = country.Name,
-                countryIso = country.CountryIso,
-                countryDetails = country.CountryDetails.Select(detail => new
-                {
-                    @operator = detail.Operator,
-                    operatorCode = detail.OperatorCode
-                })
-            }
-        });
+        return result is null
+            ? Problem(
+                title: "Country not supported",
+                detail: "No country matches the code in this phone number.",
+                statusCode: StatusCodes.Status404NotFound)
+            : Ok(result);
     }
 }

@@ -20,6 +20,8 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseInMemoryDatabase("CoureTestDatabase"));
 
+builder.Services.AddScoped<IPhoneLookupService, PhoneLookupService>();
+
 var app = builder.Build();
 
 // Create the in-memory database and load its seeded records.
